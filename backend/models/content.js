@@ -55,7 +55,7 @@ const contentGenerationSchema = new mongoose.Schema({
     apiResponse: {
         model: { 
             type: String, 
-            default: 'gemini-pro' 
+            default: 'gemini-2.5-flash' 
         },
         finishReason: {
             type: String,

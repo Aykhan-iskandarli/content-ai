@@ -104,17 +104,14 @@ const optionalAuth = async (req, res, next) => {
             req.user = user;
             req.userId = user._id;
             req.isAuthenticated = true;
-            // Qeyd: Login user üçün anonymousUsage lazımdırsa, burada silinməlidir,
-            // amma indi yoxlanılır ki, sadəcə təyin olunmasın.
+    
         } else {
-            // --- 2. Token var idi, amma istifadəçi tapılmadı və ya aktiv deyil
             initializeAnonymousSession();
         }
 
         next();
 
     } catch (error) {
-        // --- 3. Token səhvdir (expired, invalid)
         initializeAnonymousSession();
         next(); // Anonim kimi davam et
     }

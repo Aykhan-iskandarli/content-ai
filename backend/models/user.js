@@ -131,7 +131,6 @@ userSchema.methods.canGenerateContent = function() {
     return this.monthlyGenerationCount < this.limits.monthlyGenerations;
 };
 
-// Update timestamps on save
 
 // Password hash method (static - yeni user üçün)
 userSchema.statics.hashPassword = async function(password) {
