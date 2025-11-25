@@ -1,6 +1,9 @@
 // server.js
 const express = require('express');
+const session = require('express-session');
 const connectDB = require('./config/database.js');
+const geminiRoutes = require('./routes/content.js');
+const authRoutes = require('./routes/user');
 require('dotenv').config();
 
 const app = express();
@@ -9,11 +12,18 @@ const PORT = process.env.PORT || 5000;
 // Middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your-session-secret',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { 
+        secure: false, // production-da true
+        maxAge: 24 * 60 * 60 * 1000 // 24 saat
+    }
+}));
 // Routes
-const geminiRoutes = require('./routes/content');
 app.use('/api/gemini', geminiRoutes);
-
+app.use('/api/auth', authRoutes);
 // Test route
 app.get('/', (req, res) => {
     res.json({
@@ -21,6 +31,8 @@ app.get('/', (req, res) => {
         message: 'Express server is work! 🚀'
     });
 });
+
+
 
 // Server başlat
 const startServer = async () => {
