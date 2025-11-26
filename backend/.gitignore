@@ -1,0 +1,5 @@
+# .gitignore faylında
+# Ətraf mühit dəyişənləri və Node modul qovluqları
+node_modules/
+.env
+backend/.env
