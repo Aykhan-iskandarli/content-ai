@@ -14,8 +14,7 @@ const getUserLimits = async (user) => {
     monthlyTokensRemaining: tokenStatus.monthlyRemaining,
     generationsUsed: user.monthlyGenerationCount,
     generationsLimit: user.limits.monthlyGenerations,
-    generationsRemaining:
-      user.limits.monthlyGenerations - user.monthlyGenerationCount,
+    generationsRemaining:user.limits.monthlyGenerations - user.monthlyGenerationCount,
   };
 };
 

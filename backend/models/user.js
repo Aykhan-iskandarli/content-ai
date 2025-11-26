@@ -69,6 +69,33 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+      stripe: {
+        customerId: {
+            type: String,  // cus_xxxxx
+            default: null
+        },
+        subscriptionId: {
+            type: String,  // sub_xxxxx
+            default: null
+        },
+        priceId: {
+            type: String,  // price_xxxxx (hansı plan)
+            default: null
+        },
+        currentPeriodEnd: {
+            type: Date,    // Subscription bitəndə
+            default: null
+        },
+        status: {
+            type: String,  // active, canceled, past_due
+            enum: ['active', 'trialing', 'canceled', 'past_due', 'unpaid', null],
+            default: null
+        },
+        cancelAtPeriodEnd: {
+            type: Boolean,  // Ay sonunda ləğv olacaq?
+            default: false
+        }
+    },
     
     // Timestamps
     createdAt: {
@@ -80,6 +107,52 @@ const userSchema = new mongoose.Schema({
         default: Date.now
     }
 });
+
+
+userSchema.methods.updatePlanLimits = function() {
+    switch(this.plan) {
+        case 'enterprise':
+            this.limits.dailyTokens = 1000000;
+            this.limits.monthlyTokens = 10000000;
+            this.limits.monthlyGenerations = -1; // unlimited
+            this.limits.requestsPerMinute = 120;
+            break;
+        case 'premium':
+            this.limits.dailyTokens = 100000;
+            this.limits.monthlyTokens = 3000000;
+            this.limits.monthlyGenerations = 100;
+            this.limits.requestsPerMinute = 90;
+            break;
+        default: // free
+            this.limits.dailyTokens = 32000;
+            this.limits.monthlyTokens = 1000000;
+            this.limits.monthlyGenerations = 10;
+            this.limits.requestsPerMinute = 60;
+    }
+    return this.save();
+};
+
+userSchema.methods.hasActiveSubscription = function() {
+    if (this.plan === 'free') return false;
+    
+    return this.stripe.status === 'active' && 
+           this.stripe.currentPeriodEnd && 
+           new Date(this.stripe.currentPeriodEnd) > new Date();
+};
+
+userSchema.methods.checkSubscriptionExpiry = function() {
+    if (!this.stripe.currentPeriodEnd) return false;
+    
+    if (new Date(this.stripe.currentPeriodEnd) < new Date() && 
+        this.plan !== 'free') {
+        
+        this.plan = 'free';
+        this.stripe.status = 'canceled';
+        this.updatePlanLimits();
+        return true; // expired və downgrade oldu
+    }
+    return false; // hələ aktivdir
+};
 
 // Check if monthly reset needed
 userSchema.methods.checkMonthlyReset = function() {
@@ -116,14 +189,23 @@ userSchema.methods.hasTokensRemaining = function() {
     this.checkDailyReset();
     this.checkMonthlyReset();
     
+    // Enterprise unlimited check
+    const isUnlimited = this.plan === 'enterprise' && 
+                       this.limits.monthlyGenerations === -1;
+    
     return {
         dailyRemaining: this.limits.dailyTokens - this.tokenUsage.daily.count,
         monthlyRemaining: this.limits.monthlyTokens - this.tokenUsage.monthly.count,
-        canGenerate: this.tokenUsage.daily.count < this.limits.dailyTokens && 
-                    this.tokenUsage.monthly.count < this.limits.monthlyTokens &&
-                    this.monthlyGenerationCount < this.limits.monthlyGenerations
+        canGenerate: isUnlimited || (
+            this.tokenUsage.daily.count < this.limits.dailyTokens && 
+            this.tokenUsage.monthly.count < this.limits.monthlyTokens &&
+            (this.limits.monthlyGenerations === -1 || 
+             this.monthlyGenerationCount < this.limits.monthlyGenerations)
+        ),
+        isUnlimited: isUnlimited
     };
 };
+
 
 // Check generation limit
 userSchema.methods.canGenerateContent = function() {
@@ -158,6 +240,16 @@ userSchema.methods.getPublicProfile = function() {
         name: this.name,
         email: this.email,
         plan: this.plan,
+        limits: {
+            generations: this.limits.monthlyGenerations === -1 ? 'Unlimited' : this.limits.monthlyGenerations,
+            dailyTokens: this.limits.dailyTokens,
+            monthlyTokens: this.limits.monthlyTokens
+        },
+        subscription: this.stripe.status ? {
+            status: this.stripe.status,
+            endsAt: this.stripe.currentPeriodEnd,
+            willCancel: this.stripe.cancelAtPeriodEnd
+        } : null,
         createdAt: this.createdAt
     };
 };

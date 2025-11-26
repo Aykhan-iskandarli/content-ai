@@ -1,12 +1,11 @@
 // controllers/content.controller.js
-const { model } = require('../config/gemini');
+const { GeminiModel } = require('../config/gemini');
 const User = require('../models/user');
 const { getUserLimits, getAnonymousLimits } = require('../helper/userLimit');
 
 const generateContent = async (req, res) => {
   try {
-    const { productName, keyFeatures, targetAudience, tone, contentType } =
-      req.body;
+    const { productName, keyFeatures, targetAudience, tone, contentType } =req.body;
 
     let userLimits = null;
     let isAnonymous = false;
@@ -89,7 +88,7 @@ MÜTLƏQ Azərbaycan dilində və mədəniyyətinə uyğun yaz.`;
 
     // API call
     const startTime = Date.now();
-    const result = await model.generateContent(promptTemplate);
+    const result = await GeminiModel.generateContent(promptTemplate);
     const generatedText = result.response.text();
     const responseTime = Date.now() - startTime;
 
@@ -123,7 +122,6 @@ MÜTLƏQ Azərbaycan dilində və mədəniyyətinə uyğun yaz.`;
         },
       });
     } else {
-      console.log(req.session, "req.session");
       req.session.anonymousUsage.dailyCount++;
       req.session.anonymousUsage.monthlyCount++;
       req.session.anonymousUsage.dailyTokens += tokenCount.totalTokens;
@@ -131,31 +129,38 @@ MÜTLƏQ Azərbaycan dilində və mədəniyyətinə uyğun yaz.`;
     }
 
     // Response
-   res.json({
-            success: true,
-            data: {
-                generatedContent: generatedText,
-                parameters: { productName, contentType, tone }
-            },
-            usage: {
-                tokensUsed: tokenCount.totalTokens,
-                limits: {
-                    generations: `${userLimits.generationsUsed + 1}/${userLimits.generationsLimit}`,
-                    generationsRemaining: userLimits.generationsRemaining - 1,
-                    dailyTokensRemaining: userLimits.dailyTokensRemaining - tokenCount.totalTokens,
-                    monthlyTokensRemaining: userLimits.monthlyTokensRemaining - tokenCount.totalTokens,
-                    percentageUsed: Math.round(
-                        ((userLimits.generationsUsed + 1) / userLimits.generationsLimit) * 100
-                    ),
-                },
-                accountType: isAnonymous ? 'anonymous' : 'registered',
-                message: isAnonymous 
-                    ? 'Sign up to get higher limits!'
-                    : `You are on ${req.user.plan} plan`
-            }
-        });
+ const planName = req.user ? req.user.plan : 'anonymous';
+const isUnlimited = req.user && req.user.plan === 'enterprise';
+
+res.json({
+    success: true,
+    data: {
+        generatedContent: generatedText,
+        parameters: { productName, contentType, tone }
+    },
+    usage: {
+        tokensUsed: tokenCount.totalTokens,
+        limits: {
+            generations: isUnlimited 
+                ? `${userLimits.generationsUsed + 1}/Unlimited`
+                : `${userLimits.generationsUsed + 1}/${userLimits.generationsLimit}`,
+            generationsRemaining: isUnlimited 
+                ? 'Unlimited' 
+                : userLimits.generationsRemaining - 1,
+            dailyTokensRemaining: userLimits.dailyTokensRemaining - tokenCount.totalTokens,
+            monthlyTokensRemaining: userLimits.monthlyTokensRemaining - tokenCount.totalTokens,
+            percentageUsed: isUnlimited 
+                ? 0 
+                : Math.round(((userLimits.generationsUsed + 1) / userLimits.generationsLimit) * 100)
+        },
+        accountType: isAnonymous ? 'anonymous' : 'registered',
+        plan: planName,
+        message: isAnonymous 
+            ? 'Sign up to get higher limits!'
+            : `You are on ${planName} plan`
+    }
+});
   } catch (error) {
-    console.error('Content generation error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to generate content',
@@ -165,6 +170,7 @@ MÜTLƏQ Azərbaycan dilində və mədəniyyətinə uyğun yaz.`;
 };
 
 // API status - həm anonim həm user üçün
+
 const getApiStatus = async (req, res) => {
   try {
     let response = {
@@ -180,33 +186,49 @@ const getApiStatus = async (req, res) => {
 
     // User və ya anonim status
     if (req.isAuthenticated && req.user) {
-      // Login user limits
+      // Login user limits - PLANA GÖRƏ DİNAMİK
       const userLimits = await getUserLimits(req.user);
+      const user = req.user;
+      
+      // Plan-a görə limitlər
+      let planLimits = {
+        dailyTokens: user.limits.dailyTokens,
+        monthlyTokens: user.limits.monthlyTokens,
+        dailyGenerations: user.plan === 'enterprise' ? 'Unlimited' : 'Unlimited',
+        monthlyGenerations: user.limits.monthlyGenerations === -1 ? 'Unlimited' : user.limits.monthlyGenerations
+      };
       
       response.userStatus = {
         isLoggedIn: true,
         accountType: 'registered',
-        plan: req.user.plan,
-        limits: {
-          dailyTokens: 32000,
-          monthlyTokens: 1000000,
-          dailyGenerations: 'Unlimited',
-          monthlyGenerations: 10
-        },
+        plan: user.plan, // free/premium/enterprise
+        subscription: user.stripe.status ? {
+          status: user.stripe.status,
+          validUntil: user.stripe.currentPeriodEnd,
+          willCancel: user.stripe.cancelAtPeriodEnd
+        } : null,
+        limits: planLimits,
         usage: {
-          generationsToday: `${userLimits.generationsUsed}/${userLimits.generationsLimit}`,
-          generationsRemaining: userLimits.generationsRemaining,
+          generationsToday: userLimits.generationsLimit === -1 
+            ? `${userLimits.generationsUsed}/Unlimited`
+            : `${userLimits.generationsUsed}/${userLimits.generationsLimit}`,
+          generationsRemaining: userLimits.generationsLimit === -1 
+            ? 'Unlimited' 
+            : userLimits.generationsRemaining,
           dailyTokensRemaining: userLimits.dailyTokensRemaining,
           monthlyTokensRemaining: userLimits.monthlyTokensRemaining,
           percentageUsed: {
-            daily: Math.round((1 - userLimits.dailyTokensRemaining / 32000) * 100),
-            monthly: Math.round((1 - userLimits.monthlyTokensRemaining / 1000000) * 100),
-            generations: Math.round((userLimits.generationsUsed / userLimits.generationsLimit) * 100)
+            daily: Math.round((1 - userLimits.dailyTokensRemaining / user.limits.dailyTokens) * 100),
+            monthly: Math.round((1 - userLimits.monthlyTokensRemaining / user.limits.monthlyTokens) * 100),
+            generations: userLimits.generationsLimit === -1 
+              ? 0 
+              : Math.round((userLimits.generationsUsed / userLimits.generationsLimit) * 100)
           }
-        }
+        },
+        upgradeAvailable: user.plan === 'free' || user.plan === 'premium'
       };
     } else {
-      // Anonim user limits
+      // Anonim user limits (existing code)
       const anonLimits = getAnonymousLimits(req);
       
       response.userStatus = {
@@ -234,7 +256,8 @@ const getApiStatus = async (req, res) => {
         comparison: {
           anonymous: '3 generations/day, 20/month',
           free: '10 generations/month, more tokens',
-          premium: 'Unlimited generations'
+          premium: '100 generations/month, 3M tokens',
+          enterprise: 'Unlimited generations, 10M tokens'
         }
       };
     }
@@ -256,7 +279,6 @@ const getApiStatus = async (req, res) => {
     });
   }
 };
-
 module.exports = {
   generateContent,
   getApiStatus
